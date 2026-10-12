@@ -28,11 +28,19 @@
 
 ### Keep the Compose port
 
-Previously the writer reassigned any port outside TDK's bring-your-own range and told the user the app must read `PORT`. That breaks images that bind a fixed port. The writer now keeps a Compose port when it is 1024 to 65535 and notes when it is outside TDK's usual range. Different containers can share a port, so it is not checked against other services. When Compose gives no port, the writer allocates one from the HTTP range (or 6000-6999 for workers).
+The writer keeps a Compose container port from 1024 to 65535 and notes when it is outside TDK's usual 4000-5999, because the image already listens there. Below 1024 TDK rejects the port, so the writer assigns a free one from 4000-5999 and the note says the container must read `PORT`. Different containers can share a port (core only warns in `tdk doctor`), so ports are not checked against other services.
 
-### Workers
+### Private services
 
-A service whose only port is a known non-HTTP port is `appType: worker`, `exposeViaProxy: false`, and has no `healthCheckPath`. Everything else gets `healthCheckPath` from an explicit URL in `healthcheck.test`, else `/`.
+A service whose only port is a known non-HTTP port, or that publishes no single port, stays `appType: bring-your-own` with `exposeViaProxy: false` and no `healthCheckPath`. It is not `worker`: core's worker path ignores `image`, so a worker would not run the Compose image. Any other single port, including 8000 and 8080, is routed.
+
+### Build and image
+
+With `build`, the manifest carries `buildContext` and `dockerfile`; `image` is ignored, because Compose builds and tags it while TDK would pull it. Without `build`, `image` must match TDK's accepted characters (`[A-Za-z0-9._/:@-]`); an interpolated image is reported and not written, and dependencies on it are dropped.
+
+### Report
+
+Every service key the detector does not translate is named, as are `compose.yaml`-style alternates and override files that `docker compose` would use. A health path TDK rejects is reported and not used. A build context outside the directory skips the service.
 
 ### Project config
 

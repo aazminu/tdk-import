@@ -7,7 +7,7 @@
 - **BREAKING** `tdk-import` reads exactly `<dir>/docker-compose.yml`. It no longer walks the tree, honors `.gitignore`, or reads Dockerfile, `package.json`, or Procfile. A missing root file is an error that says so.
 - **BREAKING** Remove `--only`. Compose is the only active detector.
 - Compose detection additionally carries stack membership, `depends_on`, the original `build.context` and `build.dockerfile`, an HTTP health path from `healthcheck.test`, and whether the service should be exposed through the proxy.
-- Services on common non-HTTP ports (Postgres, MySQL, Redis, Mongo, RabbitMQ, Kafka, Elasticsearch, Memcached) are written as private workers with no health path and no proxy route.
+- Services on common non-HTTP ports (Postgres, MySQL, Redis, Mongo, RabbitMQ, Kafka, Elasticsearch, Memcached) are written as private bring-your-own services with no health path and no proxy route.
 - With `--yes` (or confirmation), also write a minimal `.tdk/project.json` when none exists, enabling the proxy and the imported stack.
 - A Compose port is kept when it is a valid unprivileged port, instead of being replaced by a TDK-assigned one. Services of different containers may share a port.
 - Document the narrow scope; `profiles` and `extends` are still reported as skipped.

@@ -9,8 +9,7 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "docs/procfile-conversion.svg"
+    "README.md"
   ],
   "repository": {
     "type": "git",

@@ -8,13 +8,15 @@ tdk import .               # plan, then ask before writing
 tdk import . --yes         # write service.json files and project setup
 ```
 
-It reads one root `docker-compose.yml`, preserves the service build context, image, supported container port, health path, and `depends_on`, and never overwrites `service.json` without `--force`. See [docs/import.md](docs/import.md) for the supported mapping and limits.
+## What to expect
 
-## Core version requirement
+- **Reads one file:** the root `docker-compose.yml`. Not `compose.yaml`, override files, nested Compose files, Dockerfiles on their own, `package.json`, or Procfiles.
+- **Writes:** one bring-your-own `service.json` per Compose service, plus `.tdk/project.json` if the repo is not a TDK project yet. It never edits the Compose file or overwrites a `service.json` without `--force`.
+- **Keeps:** the build context and Dockerfile (or the image), the container port, `depends_on`, and an HTTP health path. Databases and brokers are private, with no proxy route.
+- **Drops, and says so:** env values, volumes, `command`, `env_file` and every other untranslated key; services with `profiles`, `extends`, an out-of-tree build or a `${VAR}` image.
+- **Does not start anything.** Put env values in `.env`, then run `tdk up` with TDK core **1.3.145 or later**. The importer does not check the core version.
 
-Use TDK CLI core **1.3.104 or later** to start imported services. Version 1.3.104 is the first release with `buildContext` ([tdk-cli-core#525](https://github.com/tdk-landscape/tdk-cli-core/pull/525), [release 1.3.104](https://github.com/tdk-landscape/tdk-cli-releases/releases/tag/v1.3.104)). Upgrade TDK before running `tdk up` on imported services. If core 1.3.104 is not available in your environment, import cannot be started yet; do not run `tdk up` against an older core. The importer does not check the installed TDK version.
-
-`tdk import` is the existing CLI command backed by this package. The importer does not scaffold app code or edit the original Compose file.
+See [docs/import.md](docs/import.md) for the full mapping and limits. `tdk import` is the core CLI command backed by this package.
 
 ```bash
 bun install && bun run build && bun run test

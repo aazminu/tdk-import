@@ -28,7 +28,7 @@ Candidates for the same directory and name SHALL merge. Two different values for
 
 ### Requirement: Write is explicit and does not overwrite
 
-The default SHALL print the plan and ask before writing. `--dry-run` SHALL write nothing. `--yes` SHALL write without prompting. An existing `service.json` MUST be left unchanged unless `--force`. When `<root>/.tdk/project.json` does not exist, the write SHALL also create a minimal one enabling the proxy and the imported stack, and MUST NOT overwrite an existing one, with or without `--force`. A Compose container port from 1024 to 65535 SHALL be kept; a port outside TDK's usual range SHALL be noted in the plan. A service with no Compose port SHALL be assigned a free port by TDK.
+The default SHALL print the plan and ask before writing. `--dry-run` SHALL write nothing. `--yes` SHALL write without prompting. An existing `service.json` MUST be left unchanged unless `--force`. When `<root>/.tdk/project.json` does not exist, the write SHALL also create a minimal one enabling the proxy and the imported stack, and MUST NOT overwrite an existing one, with or without `--force`. A Compose container port from 1024 to 65535 SHALL be kept; a port outside TDK's usual range SHALL be noted in the plan. A Compose port below 1024 SHALL be replaced by a free port and the plan SHALL say the container must read `PORT`. A service with no Compose port SHALL be assigned a free port by TDK.
 
 #### Scenario: Project config is created once
 
@@ -42,15 +42,32 @@ The default SHALL print the plan and ask before writing. `--dry-run` SHALL write
 - **THEN** the written `service.json` has port 8080
 - **AND** the plan notes the port is outside TDK's usual range
 
-#### Scenario: Database service is a private worker
+#### Scenario: Database service is a private bring-your-own service
 
 - **WHEN** a Compose service exposes only port 5432
-- **THEN** the manifest sets `appType` to `worker` and `exposeViaProxy` to `false`
+- **THEN** the manifest keeps `appType` `bring-your-own` and its `image`, and sets `exposeViaProxy` to `false`
 - **AND** it has no `healthCheckPath`
+
+#### Scenario: Privileged Compose port is reassigned
+
+- **WHEN** a Compose service listens on container port 80
+- **THEN** the written `port` is a free port in 4000-5999
+- **AND** the plan says the container must listen on `$PORT`
+
+#### Scenario: Build wins over image
+
+- **WHEN** a Compose service has both `build` and `image`
+- **THEN** the manifest sets `buildContext` and `dockerfile` and omits `image`
+
+#### Scenario: Values TDK would refuse are not written
+
+- **WHEN** a Compose image contains `${VAR}`, or a health path has characters outside `a-z0-9/-`
+- **THEN** the image service is reported and not written, or the health path is not used
+- **AND** the plan names the reason
 
 ### Requirement: The report lists what was not translated
 
-The plan SHALL list Compose constructs that affect service interpretation and were not translated. A skipped Compose feature (`extends`, `profiles`) SHALL name the file and the service. The report MUST NOT be written into `service.json`.
+The plan SHALL list every Compose service key that was not translated, plus alternate Compose file names and override files that `docker compose` would use but were not read. A skipped Compose feature (`extends`, `profiles`) SHALL name the file and the service. The report MUST NOT be written into `service.json`.
 
 #### Scenario: Unsupported Compose construct is named
 
