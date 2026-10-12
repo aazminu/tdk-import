@@ -18,7 +18,10 @@ function containerPort(entry: unknown): number | undefined {
   return /^\d+$/.test(first) ? Number.parseInt(first, 10) : undefined;
 }
 
-const NON_HTTP_PORTS = new Set([3306, 5432, 6379, 27017, 5672, 9092, 9200, 11211]);
+/** Well-known non-HTTP ports: SSH, SMTP, ZooKeeper, MQTT, then databases and brokers. */
+const NON_HTTP_PORTS = new Set([
+  22, 25, 1883, 2181, 3306, 5432, 5672, 6379, 9092, 9200, 11211, 27017,
+]);
 
 /**
  * Service keys this detector translates. Every other key is named in the report: TDK runs a
@@ -147,6 +150,18 @@ registerDetector({
             .filter((p): p is number => p !== undefined),
         ),
       ];
+      const unreadable = (Array.isArray(raw.ports) ? raw.ports : []).filter(
+        (entry) => containerPort(entry) === undefined,
+      );
+      if (unreadable.length > 0) {
+        skips.push({
+          ...base,
+          reason:
+            ports.length === 0
+              ? `service "${name}" ports not understood (${JSON.stringify(unreadable)}); it is imported as a private service with no route`
+              : `service "${name}" has port entries that were not understood and ignored (${JSON.stringify(unreadable)}); only ${ports.join(", ")} was read`,
+        });
+      }
       const httpPorts = ports.filter((port) => port <= 5999 && !NON_HTTP_PORTS.has(port));
       const selectedPort =
         httpPorts.length === 1 ? httpPorts[0] : ports.length === 1 ? ports[0] : undefined;

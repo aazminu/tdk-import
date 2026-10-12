@@ -1,0 +1,4 @@
+services:
+  only:
+    image: example/only:1
+    profiles: [never]

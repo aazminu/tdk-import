@@ -1,0 +1,7 @@
+services:
+  a:
+    image: example/a:1
+    ports: ["4000:4000"]
+  b:
+    image: example/b:1
+    ports: ["4000:4000"]

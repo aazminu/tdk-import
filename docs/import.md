@@ -22,7 +22,7 @@ Each Compose service becomes `services/<stack>/<service>/service.json`, where th
 | `depends_on` | `dependsOn`, limited to services in this import |
 | `environment` | names in the plan only; values are never written |
 
-Every imported service is `appType: "bring-your-own"`. A service whose port is 3306, 5432, 6379, 27017, 5672, 9092, 9200 or 11211, or that publishes no single port, is private: `exposeViaProxy: false`, no Traefik route, no health path. Any other single port, including 8000 and 8080, gets a Traefik route.
+Every imported service is `appType: "bring-your-own"`. A service whose port is 22, 25, 1883, 2181, 3306, 5432, 5672, 6379, 9092, 9200, 11211 or 27017, or that publishes no single port, is private: `exposeViaProxy: false`, no Traefik route, no health path. Any other single port, including 8000 and 8080, gets a Traefik route.
 
 ## What does not map
 
@@ -32,6 +32,7 @@ The plan names each of these. Nothing below is guessed.
 - **Service keys other than** `build`, `image`, `ports`, `environment`, `depends_on` and `healthcheck`. The plan lists the rest per service, for example `volumes`, `command`, `entrypoint`, `env_file`, `networks`, `restart`. In particular, data in Compose volumes is not kept, and a Compose `command` is not run: the image's own `CMD` runs.
 - **Services not written at all:** `profiles`, `extends`, a `build` context outside `dir`, and an `image` with Compose variables such as `postgres:${PG_VERSION:-16}`. A dependency on a service that is not written is dropped and noted.
 - **Values TDK would refuse.** A health path with characters other than `a-z`, `0-9`, `/` and `-` is not used.
+- **Ports it cannot read**, such as `${PORT}:${PORT}`. If none of a service's port entries can be read, it is imported as private. If some can, the unreadable ones are ignored and the plan names them. Either way the plan says so.
 - **Interpolation and merging.** `docker compose config` is not run; `${VAR}` is not resolved. YAML anchors are resolved and noted.
 
 ## Before `tdk up`
@@ -39,3 +40,5 @@ The plan names each of these. Nothing below is guessed.
 1. Put the environment values the services need in the project `.env`. Values in `docker-compose.yml` were not copied.
 2. Use TDK core **1.3.145 or later**. 1.3.104 added `buildContext` ([tdk-cli-core#525](https://github.com/tdk-landscape/tdk-cli-core/pull/525)); 1.3.145 starts a project that has `.tdk/project.json` but no Tiltfile yet ([tdk-cli-core#1018](https://github.com/tdk-landscape/tdk-cli-core/pull/1018)). The importer does not check the installed version.
 3. TDK injects its own `PORT`, `DATABASE_URL` and a `Host: <service>.<project>.localhost` header. An app that validates its host or reads `DATABASE_URL` may need configuration that Compose did not.
+
+The command exits 1 when nothing could be imported (an unreadable file, or every service skipped).

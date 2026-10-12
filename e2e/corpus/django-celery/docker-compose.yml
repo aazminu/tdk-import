@@ -1,0 +1,11 @@
+services:
+  web:
+    build: ./backend
+    ports: ["8000:8000"]
+    depends_on: [db]
+  worker:
+    build: ./backend
+    command: celery -A app worker
+    depends_on: [db]
+  db:
+    image: postgres:16

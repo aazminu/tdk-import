@@ -1,0 +1,4 @@
+services:
+  app:
+    image: example/app:1
+    ports: ["${PORT:-3000}:${PORT:-3000}"]

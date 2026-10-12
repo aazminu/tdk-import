@@ -1,0 +1,4 @@
+services:
+  jobs:
+    build: .
+    command: node worker.js
