@@ -46,6 +46,10 @@ function existingPort(path: string): number | undefined {
  * Maps merged services onto TDK bring-your-own manifests. This is the only stage that knows the
  * layout `<project>/services/<stack>/<name>/service.json`. Nothing is written here.
  */
+/** Images that serve a protocol other than HTTP. Matched against the image name, not its tag. */
+const NON_HTTP_IMAGE =
+  /(^|\/)(postgres|mysql|mariadb|mongo|mongodb|redis|valkey|memcached|minio|mailpit|mailhog|rabbitmq|kafka|zookeeper|elasticsearch|opensearch|openssh-server)(:|@|$)/i;
+
 export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
   const projectRoot = findProjectRoot(plan.root) ?? plan.root;
   const stack = toResourceName(basename(plan.root));
@@ -161,8 +165,14 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
     const dropped = service.dependsOn.filter((d) => d !== service.name && !names.has(d));
     if (dropped.length)
       notes.push(`dependsOn not written, not in this import: ${dropped.join(", ")}`);
-    const healthCheckPath = isPrivate ? undefined : (service.healthCheckPath ?? "/");
-    if (!isPrivate && !service.healthCheckPath)
+    // Infrastructure images and one-shot jobs do not serve HTTP, so an assumed "/" would only
+    // fail the probe. Leave the path out; the runtime then skips the HTTP probe.
+    const nonHttp =
+      service.kind === "job" || (service.image !== undefined && NON_HTTP_IMAGE.test(service.image));
+    const healthCheckPath = isPrivate || nonHttp ? undefined : (service.healthCheckPath ?? "/");
+    if (nonHttp && !isPrivate)
+      notes.push("no health path: the service does not serve HTTP (non-HTTP image or job)");
+    if (!isPrivate && !nonHttp && !service.healthCheckPath)
       notes.push(
         "health path / is assumed: Compose has no HTTP healthcheck URL. Traefik routes only while it answers 2xx or 3xx",
       );
