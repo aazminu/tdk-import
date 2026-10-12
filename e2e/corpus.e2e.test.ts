@@ -10,7 +10,7 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXPECTATIONS } from "./corpus/expectations.js";
 
@@ -55,7 +55,7 @@ describe.each(names)("corpus: %s", (name) => {
   const manifests = (repo: string) =>
     Object.fromEntries(
       walk(join(repo, "services")).map((p) => [
-        p.split("/").at(-2) as string,
+        basename(dirname(p)),
         JSON.parse(readFileSync(p, "utf8")),
       ]),
     ) as Record<string, Record<string, unknown>>;

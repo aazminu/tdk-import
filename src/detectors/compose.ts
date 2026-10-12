@@ -150,10 +150,16 @@ registerDetector({
             .filter((p): p is number => p !== undefined),
         ),
       ];
-      if (Array.isArray(raw.ports) && raw.ports.length > 0 && ports.length === 0) {
+      const unreadable = (Array.isArray(raw.ports) ? raw.ports : []).filter(
+        (entry) => containerPort(entry) === undefined,
+      );
+      if (unreadable.length > 0) {
         skips.push({
           ...base,
-          reason: `service "${name}" ports not understood (${JSON.stringify(raw.ports)}); it is imported as a private service with no route`,
+          reason:
+            ports.length === 0
+              ? `service "${name}" ports not understood (${JSON.stringify(unreadable)}); it is imported as a private service with no route`
+              : `service "${name}" has port entries that were not understood and ignored (${JSON.stringify(unreadable)}); only ${ports.join(", ")} was read`,
         });
       }
       const httpPorts = ports.filter((port) => port <= 5999 && !NON_HTTP_PORTS.has(port));

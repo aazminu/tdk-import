@@ -32,7 +32,7 @@ The plan names each of these. Nothing below is guessed.
 - **Service keys other than** `build`, `image`, `ports`, `environment`, `depends_on` and `healthcheck`. The plan lists the rest per service, for example `volumes`, `command`, `entrypoint`, `env_file`, `networks`, `restart`. In particular, data in Compose volumes is not kept, and a Compose `command` is not run: the image's own `CMD` runs.
 - **Services not written at all:** `profiles`, `extends`, a `build` context outside `dir`, and an `image` with Compose variables such as `postgres:${PG_VERSION:-16}`. A dependency on a service that is not written is dropped and noted.
 - **Values TDK would refuse.** A health path with characters other than `a-z`, `0-9`, `/` and `-` is not used.
-- **Ports it cannot read**, such as `${PORT}:${PORT}`: the service is imported as private and the plan says so.
+- **Ports it cannot read**, such as `${PORT}:${PORT}`. If none of a service's port entries can be read, it is imported as private. If some can, the unreadable ones are ignored and the plan names them. Either way the plan says so.
 - **Interpolation and merging.** `docker compose config` is not run; `${VAR}` is not resolved. YAML anchors are resolved and noted.
 
 ## Before `tdk up`

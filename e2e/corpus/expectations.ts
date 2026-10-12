@@ -107,6 +107,10 @@ export const EXPECTATIONS: Record<string, Expectation> = {
     services: { app: privateSvc },
     plan: ["ports not understood"],
   },
+  "partly-unreadable-ports": {
+    services: { app: svc({ match: { port: 8080 } }, routed) },
+    plan: ["port entries that were not understood and ignored", "only 8080 was read"],
+  },
   "profiles-and-extends": {
     services: { web: { match: { port: 4000 } } },
     notWritten: ["debug", "api2"],
