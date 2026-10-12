@@ -35,7 +35,9 @@ const program = new Command("tdk-import")
 
     const pending = writes.items.filter((i) => i.status !== "exists");
     if (plan.services.length === 0) {
-      return void console.log("Nothing to import.");
+      console.log("Nothing to import: no service in docker-compose.yml could be mapped.");
+      process.exitCode = 1;
+      return;
     }
     if (options.dryRun) return void console.log("Dry run: nothing written.");
     if (pending.length === 0 && !writes.projectConfig) {

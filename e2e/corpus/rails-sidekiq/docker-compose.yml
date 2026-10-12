@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    ports: ["3000:3000"]
+    depends_on: [db, redis]
+    command: bundle exec rails s -b 0.0.0.0
+  sidekiq:
+    build: .
+    command: bundle exec sidekiq
+    depends_on: [db, redis]
+  db:
+    image: postgres:16
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]

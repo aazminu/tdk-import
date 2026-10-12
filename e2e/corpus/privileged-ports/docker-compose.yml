@@ -1,0 +1,7 @@
+services:
+  one:
+    image: nginx:1.27
+    ports: ["8080:80"]
+  two:
+    image: nginx:1.27
+    ports: ["8081:81"]

@@ -1,0 +1,12 @@
+services:
+  app:
+    image: example/spring-app:1.0
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/actuator/health"]
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mysql:8
+    ports: ["3306:3306"]

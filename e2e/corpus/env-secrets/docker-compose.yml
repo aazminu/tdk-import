@@ -1,0 +1,11 @@
+services:
+  api:
+    image: example/api:1
+    ports: ["4000:4000"]
+    environment:
+      - API_KEY=SECRET_TOKEN_list
+      - PLAIN=SECRET_TOKEN_plain
+  worker:
+    image: example/worker:1
+    environment:
+      DB_URL: postgres://user:SECRET_TOKEN_map@db/app

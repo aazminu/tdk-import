@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
 let work: string;
@@ -22,14 +22,6 @@ function run(args: string[], input?: string) {
 }
 const manifest = (name: string) =>
   JSON.parse(readFileSync(join(repo, "services", "shop", name, "service.json"), "utf8"));
-
-beforeAll(() => {
-  const build = spawnSync("npm", ["run", "build"], {
-    cwd: join(import.meta.dirname, ".."),
-    encoding: "utf8",
-  });
-  if (build.status !== 0) throw new Error(`build failed:\n${build.stdout}${build.stderr}`);
-});
 
 beforeEach(() => {
   work = mkdtempSync(join(tmpdir(), "tdk-import-e2e-"));

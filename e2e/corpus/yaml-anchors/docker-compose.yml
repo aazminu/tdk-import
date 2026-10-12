@@ -1,0 +1,13 @@
+x-common: &common
+  restart: unless-stopped
+  environment:
+    LOG_LEVEL: debug
+services:
+  a:
+    <<: *common
+    image: example/a:1
+    ports: ["4000:4000"]
+  b:
+    <<: *common
+    image: example/b:1
+    ports: ["4001:4001"]

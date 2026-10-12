@@ -1,0 +1,15 @@
+services:
+  wordpress:
+    image: wordpress:6
+    ports: ["8080:80"]
+    environment:
+      WORDPRESS_DB_PASSWORD: SECRET_TOKEN_wp
+    depends_on: [db]
+    volumes: [wp:/var/www/html]
+  db:
+    image: mysql:8
+    ports: ["3306:3306"]
+    environment:
+      MYSQL_ROOT_PASSWORD: SECRET_TOKEN_mysql
+volumes:
+  wp:
