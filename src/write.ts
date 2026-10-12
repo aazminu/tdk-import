@@ -3,10 +3,11 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { ImportError } from "./errors.js";
 import { type MergedService, toResourceName } from "./merge.js";
 import { type ImportPlan, usedManifestPorts } from "./plan.js";
-import { SCAFFOLD_DOCKERIGNORE, scaffoldDockerfile } from "./scaffold.js";
 import {
   BYO_PORT_RANGE,
   findProjectRoot,
+  IMAGE_PATTERN,
+  MIN_SERVICE_PORT,
   SERVICE_MANIFEST_SCHEMA_URL,
   SERVICE_MANIFEST_SCHEMA_VERSION,
   validateName,
@@ -20,20 +21,17 @@ export interface WriteItem {
   manifest: Record<string, unknown>;
   status: WriteStatus;
   notes: string[];
-  /** Files written next to the manifest (a scaffolded Dockerfile). */
-  extraFiles: { path: string; content: string }[];
 }
 
 export interface WritePlan {
+  /** Directory holding `.tdk/project.json`, existing or about to be created. */
+  projectRoot: string;
   stack: string;
   items: WriteItem[];
   projectConfig?: { path: string; content: string };
   /** Services that could not be written, with the reason. */
   rejected: { name: string; reason: string }[];
 }
-
-const HTTP_RANGE = { ...BYO_PORT_RANGE, base: BYO_PORT_RANGE.min, range: BYO_PORT_RANGE.label };
-const WORKER_RANGE = { min: 6000, max: 6999, base: 6000, range: "6000-6999" };
 
 function existingPort(path: string): number | undefined {
   try {
@@ -92,16 +90,27 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
         )}\n`,
       };
   const used = usedManifestPorts(servicesDir);
-  const names = new Set(plan.services.map((s) => s.name));
   const items: WriteItem[] = [];
   const rejected: WritePlan["rejected"] = [];
 
-  for (const service of plan.services) {
+  // Reject first, so no written service depends on one that is not written.
+  const accepted = plan.services.filter((service) => {
     const check = validateName("Resource name", service.name);
-    if (!check.valid) {
-      rejected.push({ name: service.name, reason: check.error ?? "invalid name" });
-      continue;
-    }
+    const reason = !check.valid
+      ? (check.error ?? "invalid name")
+      : service.dockerfile
+        ? undefined
+        : !service.image
+          ? "Compose gives it neither `image` nor a usable `build`"
+          : !IMAGE_PATTERN.test(service.image)
+            ? `image "${service.image}" uses Compose variables or characters TDK does not accept; set a literal image in docker-compose.yml, or write this service.json by hand`
+            : undefined;
+    if (reason) rejected.push({ name: service.name, reason });
+    return !reason;
+  });
+  const names = new Set(accepted.map((s) => s.name));
+
+  for (const service of accepted) {
     const path = resolve(servicesDir, stack, service.name, "service.json");
     const exists = existsSync(path);
     const status: WriteStatus = !exists ? "create" : force ? "overwrite" : "exists";
@@ -110,32 +119,40 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
     // A file this run replaces does not count against itself; a kept one keeps its port.
     if (status === "overwrite") used.delete(path);
     const keep = status === "overwrite" ? existingPort(path) : undefined;
-    const isWorker = service.exposeViaProxy === false;
-    const RANGE = isWorker ? WORKER_RANGE : HTTP_RANGE;
+    const isPrivate = service.exposeViaProxy === false;
     const taken = new Set(used.values());
-    const free = (p: number) => p >= RANGE.min && p <= RANGE.max && !taken.has(p);
+    const free = (p: number) => p >= BYO_PORT_RANGE.min && p <= BYO_PORT_RANGE.max && !taken.has(p);
     let port: number | undefined;
     if (status === "exists") {
       // Never written, so no port is needed; keep the one on disk for the plan.
-      port = existingPort(path) ?? RANGE.base;
+      port = existingPort(path) ?? BYO_PORT_RANGE.min;
+    } else if (
+      service.port !== undefined &&
+      service.port >= MIN_SERVICE_PORT &&
+      service.port <= 65535
+    ) {
+      // The image already listens here; renumbering would need the app to read PORT.
+      port = service.port;
+      if (port < BYO_PORT_RANGE.min || port > BYO_PORT_RANGE.max)
+        notes.push(
+          `port ${port} kept from Compose; it is outside TDK's usual ${BYO_PORT_RANGE.label}, so TDK may warn about the range`,
+        );
     } else if (keep !== undefined && free(keep)) {
       port = keep;
-    } else if (service.port !== undefined && service.port >= 1024 && service.port <= 65535) {
-      port = service.port;
     } else {
-      for (let p = RANGE.base; p <= RANGE.max; p++) {
+      for (let p = BYO_PORT_RANGE.min; p <= BYO_PORT_RANGE.max; p++) {
         if (free(p)) {
           port = p;
           break;
         }
       }
-      if (service.port !== undefined && (service.port < RANGE.min || service.port > RANGE.max))
+      if (service.port !== undefined && port !== undefined)
         notes.push(
-          `kept Compose container port ${service.port}; it is outside TDK's usual ${RANGE.range} allocation range`,
+          `Compose port ${service.port} is below ${MIN_SERVICE_PORT}, which TDK does not accept; assigned ${port}. The container must listen on $PORT (${port}) or it will not answer`,
         );
     }
     if (port === undefined) {
-      rejected.push({ name: service.name, reason: `no free port in ${RANGE.range}` });
+      rejected.push({ name: service.name, reason: `no free port in ${BYO_PORT_RANGE.label}` });
       continue;
     }
     if (status !== "exists") used.set(path, port);
@@ -144,43 +161,22 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
     const dropped = service.dependsOn.filter((d) => d !== service.name && !names.has(d));
     if (dropped.length)
       notes.push(`dependsOn not written, not in this import: ${dropped.join(", ")}`);
-    const manifestDir = dirname(path);
-    const sourceDir = resolve(plan.root, service.dir);
-    const extraFiles: WriteItem["extraFiles"] = [];
-    const buildFields: Record<string, string> = {};
-    const toContext = (abs: string) => {
-      const rel = relative(sourceDir, abs).split("\\").join("/");
-      return rel.startsWith(".") ? rel : `./${rel}`;
-    };
-    if (!service.image) {
-      if (service.dockerfile) {
-        // Build from the source tree the Dockerfile lives in; dockerfile is relative to that context.
-        buildFields.buildContext = relative(manifestDir, sourceDir).split("\\").join("/") || ".";
-        buildFields.dockerfile = service.dockerfile;
-      } else {
-        const scaffold = service.command ? scaffoldDockerfile(service.command) : undefined;
-        if (scaffold) {
-          extraFiles.push(
-            { path: join(manifestDir, "Dockerfile"), content: scaffold },
-            { path: join(manifestDir, "Dockerfile.dockerignore"), content: SCAFFOLD_DOCKERIGNORE },
-          );
-          buildFields.buildContext = relative(manifestDir, sourceDir).split("\\").join("/") || ".";
-          buildFields.dockerfile = toContext(join(manifestDir, "Dockerfile"));
-          notes.push(
-            "no Dockerfile found: scaffolded one from the command (guessed base image); the app must listen on $PORT",
-          );
-        } else {
-          buildFields.dockerfile = "./Dockerfile";
-          notes.push("no image or Dockerfile found; add one before `tdk up`");
-        }
-      }
-    }
-    if (service.command && !service.dockerfile && extraFiles.length === 0) {
-      notes.push("command is kept as dev.command; bring-your-own does not run it");
-    }
+    const healthCheckPath = isPrivate ? undefined : (service.healthCheckPath ?? "/");
+    if (!isPrivate && !service.healthCheckPath)
+      notes.push(
+        "health path / is assumed: Compose has no HTTP healthcheck URL. Traefik routes only while it answers 2xx or 3xx",
+      );
     if (service.envKeys.length)
       notes.push("environment values are not written; put them in the project .env");
 
+    // With both, Compose builds and tags the result as `image`; TDK pulls `image` and skips the build.
+    const source: Record<string, string> = service.dockerfile
+      ? {
+          buildContext:
+            relative(dirname(path), resolve(plan.root, service.dir)).split("\\").join("/") || ".",
+          dockerfile: service.dockerfile,
+        }
+      : { image: service.image as string };
     const manifest: Record<string, unknown> = {
       $schema: SERVICE_MANIFEST_SCHEMA_URL,
       schemaVersion: SERVICE_MANIFEST_SCHEMA_VERSION,
@@ -188,17 +184,14 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
       appType: "bring-your-own",
       stack,
       port,
-      ...(!isWorker ? { healthCheckPath: service.healthCheckPath ?? "/" } : {}),
-      ...(service.image ? { image: service.image } : buildFields),
-      ...(service.exposeViaProxy === false ? { exposeViaProxy: false } : {}),
-      ...(isWorker ? { appType: "worker", exposeViaProxy: false } : {}),
-      ...(service.kind === "job" ? { restart: "no", exposeViaProxy: false } : {}),
+      ...(healthCheckPath ? { healthCheckPath } : {}),
+      ...source,
+      ...(isPrivate ? { exposeViaProxy: false } : {}),
       ...(dependsOn.length ? { dependsOn } : {}),
-      ...(service.command ? { dev: { command: service.command } } : {}),
     };
-    items.push({ service, path, manifest, status, notes, extraFiles });
+    items.push({ service, path, manifest, status, notes });
   }
-  return { stack, items, projectConfig, rejected };
+  return { projectRoot, stack, items, projectConfig, rejected };
 }
 
 export function applyWrites(writes: WritePlan): WriteItem[] {
@@ -211,7 +204,6 @@ export function applyWrites(writes: WritePlan): WriteItem[] {
     if (item.status === "exists") continue;
     mkdirSync(dirname(item.path), { recursive: true });
     writeFileSync(item.path, `${JSON.stringify(item.manifest, null, 2)}\n`);
-    for (const extra of item.extraFiles) writeFileSync(extra.path, extra.content);
     written.push(item);
   }
   return written;

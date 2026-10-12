@@ -63,7 +63,16 @@ describe("tdk-import (built CLI)", () => {
       port: 4000,
       healthCheckPath: "/health",
     });
-    expect(manifest("db")).toMatchObject({ appType: "worker", exposeViaProxy: false });
+    // A "worker" ignores `image`; only bring-your-own runs the Compose image.
+    expect(manifest("db")).toMatchObject({
+      appType: "bring-your-own",
+      image: "postgres:16",
+      exposeViaProxy: false,
+    });
+    expect(manifest("db")).not.toHaveProperty("healthCheckPath");
+    expect(r.out).toContain("Next:");
+    expect(r.out).toContain("shop/.env; values in docker-compose.yml were not copied");
+    expect(r.out).toContain("Run `tdk up` with TDK core 1.3.145 or later");
     expect(JSON.stringify(manifest("api"))).not.toContain("postgres://");
     expect(existsSync(join(repo, ".tdk", "project.json"))).toBe(true);
   });
@@ -85,6 +94,16 @@ describe("tdk-import (built CLI)", () => {
     const r = run(["shop", "--dry-run"]);
     expect(r.code).toBe(1);
     expect(r.err).toContain("No root docker-compose.yml found");
+    expect(existsSync(join(repo, "services"))).toBe(false);
+  });
+
+  it("names compose.yaml when it is the only Compose file, and writes nothing", () => {
+    rmSync(join(repo, "docker-compose.yml"));
+    writeFileSync(join(repo, "compose.yaml"), "services:\n  web:\n    image: nginx\n");
+    const r = run(["shop", "--yes"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("(found compose.yaml); tdk import reads only that file");
+    expect(r.err).toContain("ln -s compose.yaml docker-compose.yml");
     expect(existsSync(join(repo, "services"))).toBe(false);
   });
 });

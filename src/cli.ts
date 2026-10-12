@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 import "./detectors/index.js";
 import { ImportError } from "./errors.js";
 import { formatPlan } from "./format.js";
 import { buildPlan } from "./plan.js";
+import { MIN_CORE_VERSION } from "./tdk.js";
 import { applyWrites, manifestRelPath, planWrites } from "./write.js";
 
 async function confirm(message: string): Promise<boolean> {
@@ -53,6 +54,15 @@ const program = new Command("tdk-import")
     }
     console.log(
       `\nWrote ${written.length} service.json file(s)${writes.projectConfig ? " and created .tdk/project.json" : ""}.`,
+    );
+    const envFile = relative(process.cwd(), join(writes.projectRoot, ".env")) || ".env";
+    console.log("\nNext:");
+    if (plan.services.some((s) => s.envKeys.length))
+      console.log(
+        `  - Put the environment values these services need in ${envFile}; values in docker-compose.yml were not copied.`,
+      );
+    console.log(
+      `  - Run \`tdk up\` with TDK core ${MIN_CORE_VERSION} or later. The import did not start anything.`,
     );
   });
 

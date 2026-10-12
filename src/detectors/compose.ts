@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize } from "node:path/posix";
 import { isAlias, isMap, type Node, parseDocument, visit } from "yaml";
 import { registerDetector } from "../registry.js";
+import { HEALTH_CHECK_PATH_PATTERN } from "../tdk.js";
 import type { Candidate, Skip } from "../types.js";
 
 type Obj = Record<string, unknown>;
@@ -18,6 +19,20 @@ function containerPort(entry: unknown): number | undefined {
 }
 
 const NON_HTTP_PORTS = new Set([3306, 5432, 6379, 27017, 5672, 9092, 9200, 11211]);
+
+/**
+ * Service keys this detector translates. Every other key is named in the report: TDK runs a
+ * bring-your-own container without volumes, command overrides, env files and the rest.
+ * `healthcheck` only contributes an HTTP path; `environment` only contributes names.
+ */
+const TRANSLATED_KEYS = new Set([
+  "image",
+  "build",
+  "ports",
+  "environment",
+  "depends_on",
+  "healthcheck",
+]);
 
 function envNames(environment: unknown): string[] {
   if (Array.isArray(environment)) {
@@ -116,13 +131,13 @@ registerDetector({
         if (isAbsolute(context) || context.includes("://") || resolved.startsWith("..")) {
           skips.push({
             ...base,
-            reason: `service "${name}" build context "${context}" is outside the imported tree`,
+            reason: `service "${name}" build context "${context}" is outside the imported directory; not imported`,
           });
-        } else {
-          dir = resolved === "." ? "" : resolved;
-          standalone = false;
-          dockerfile = typeof build.dockerfile === "string" ? build.dockerfile : "Dockerfile";
+          continue;
         }
+        dir = resolved === "." ? "" : resolved;
+        standalone = false;
+        dockerfile = typeof build.dockerfile === "string" ? build.dockerfile : "Dockerfile";
       }
 
       const ports = [
@@ -153,9 +168,27 @@ registerDetector({
           : [];
       const command = commandOf(raw.command);
       const envKeys = envNames(raw.environment);
-      const healthCheckPath = healthPathOf(raw.healthcheck);
-      const exposeViaProxy =
-        selectedPort !== undefined && !NON_HTTP_PORTS.has(selectedPort) && selectedPort <= 5999;
+      const foundHealthPath = healthPathOf(raw.healthcheck);
+      const healthCheckPath =
+        foundHealthPath && HEALTH_CHECK_PATH_PATTERN.test(foundHealthPath)
+          ? foundHealthPath
+          : undefined;
+      if (foundHealthPath && !healthCheckPath) {
+        skips.push({
+          ...base,
+          reason: `service "${name}" health path "${foundHealthPath}" has characters TDK does not accept (only a-z, 0-9, / and -); not used`,
+        });
+      }
+      const untranslated = Object.keys(raw).filter((key) => !TRANSLATED_KEYS.has(key));
+      if (untranslated.length) {
+        skips.push({
+          ...base,
+          reason: `service "${name}" keys not translated: ${untranslated.join(", ")}`,
+        });
+      }
+      // Any single published port that is not a known database/broker port is treated as HTTP,
+      // including 8000 and 8080; a service with no published port stays private, as in Compose.
+      const exposeViaProxy = selectedPort !== undefined && !NON_HTTP_PORTS.has(selectedPort);
 
       candidates.push({
         kind: "service",

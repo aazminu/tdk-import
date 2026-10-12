@@ -14,6 +14,7 @@ export function formatPlan(plan: ImportPlan, writes: WritePlan): string {
   const jobs = plan.services.filter((s) => s.kind === "job").length;
   out.push(
     `Found ${plan.services.length - jobs} service(s) and ${jobs} job(s) in ${plan.root}`,
+    `Read only: ${plan.files.join(", ")}. Lines below name what was not translated.`,
     "",
   );
   if (writes.projectConfig) out.push(`  .tdk/project.json  [create TDK project]`, "");
@@ -23,12 +24,24 @@ export function formatPlan(plan: ImportPlan, writes: WritePlan): string {
     out.push(
       `    from:      ${service.sources.map((s) => `${s.file} [${s.detector}]`).join(", ")}`,
     );
-    if (service.image) out.push(`    image:     ${service.image}`);
-    if (service.dockerfile) out.push(`    dockerfile: ${service.dockerfile}`);
-    if (service.command) out.push(`    command:   ${service.command}`);
-    if (service.port !== undefined)
-      out.push(`    port:      ${service.port} (inside the container)`);
-    if (service.healthCheckPath) out.push(`    health:    ${service.healthCheckPath}`);
+    if (service.dockerfile)
+      out.push(`    build:     ${service.dir || "."}/ with ${service.dockerfile}`);
+    else if (service.image) out.push(`    image:     ${service.image}`);
+    const manifest = item && item.status !== "exists" ? item.manifest : undefined;
+    if (manifest) {
+      out.push(
+        `    port:      ${manifest.port} ${manifest.port === service.port ? "(from Compose)" : "(assigned)"}`,
+      );
+      out.push(
+        manifest.exposeViaProxy === false
+          ? `    proxy:     none, private (${service.port === undefined ? "no single published port" : `${service.port} is a database or broker port`})`
+          : "    proxy:     routed through Traefik",
+      );
+      if (manifest.healthCheckPath)
+        out.push(
+          `    health:    ${manifest.healthCheckPath}${service.healthCheckPath ? "" : " (assumed)"}`,
+        );
+    }
     if (service.dependsOn.length) out.push(`    depends:   ${service.dependsOn.join(", ")}`);
     if (service.language)
       out.push(`    runtime:   ${service.language} (detected, not mapped to a native provider)`);

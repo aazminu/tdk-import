@@ -86,7 +86,8 @@ describe("root Compose import", () => {
     });
     expect(db).toMatchObject({
       image: "example.invalid/database:latest",
-      appType: "worker",
+      appType: "bring-your-own",
+      exposeViaProxy: false,
       port: 5432,
     });
     expect(readFileSync(serviceJson("api"), "utf8")).not.toContain("postgres://");
@@ -114,5 +115,128 @@ describe("root Compose import", () => {
       "package.json": '{"scripts":{"start":"node app.js"}}',
     });
     expect(() => buildPlan(root)).toThrow(/No root docker-compose.yml found/);
+  });
+
+  it("names Compose files that docker compose would use but the importer does not read", () => {
+    tree({
+      "docker-compose.yml": compose,
+      "docker-compose.override.yml": "services:\n  api:\n    ports: ['9000:4000']\n",
+      "compose.yaml": "services:\n  other:\n    image: nginx\n",
+    });
+    const text = formatPlan(buildPlan(root), planWrites(buildPlan(root), false));
+    expect(text).toContain("docker-compose.override.yml [compose]: not applied");
+    expect(text).toContain("compose.yaml [compose]: not read; `docker compose` prefers it");
+    expect(text).not.toContain("other");
+  });
+});
+
+describe("Compose values TDK cannot take as they are", () => {
+  const plan = (yaml: string) => {
+    tree({ "docker-compose.yml": yaml });
+    const p = buildPlan(root);
+    const writes = planWrites(p, false);
+    const manifest = (name: string) =>
+      writes.items.find((i) => i.service.name === name)?.manifest as Record<string, unknown>;
+    return { p, writes, manifest, text: formatPlan(p, writes) };
+  };
+
+  it("routes an HTTP service on 8080 and keeps the port", () => {
+    const { manifest, text } = plan(
+      "services:\n  web:\n    image: example/web:1\n    ports: ['80:8080']\n",
+    );
+    expect(manifest("web")).toMatchObject({
+      appType: "bring-your-own",
+      port: 8080,
+      healthCheckPath: "/",
+    });
+    expect(manifest("web")).not.toHaveProperty("exposeViaProxy");
+    expect(text).toContain("proxy:     routed through Traefik");
+    expect(text).toContain("health:    / (assumed)");
+    expect(text).toContain("port 8080 kept from Compose; it is outside TDK's usual 4000-5999");
+  });
+
+  it("assigns a port for a privileged Compose port and says the container must read PORT", () => {
+    const { manifest, text } = plan(
+      "services:\n  web:\n    image: nginx:1.27\n    ports: ['8080:80']\n",
+    );
+    expect(manifest("web").port).toBe(4000);
+    expect(text).toContain(
+      "Compose port 80 is below 1024, which TDK does not accept; assigned 4000",
+    );
+  });
+
+  it("builds from the Dockerfile when Compose gives both build and image", () => {
+    tree({ "api/Dockerfile": "FROM busybox\n" });
+    const { manifest } = plan(
+      "services:\n  api:\n    build: ./api\n    image: example/api:dev\n    ports: ['4000:4000']\n",
+    );
+    expect(manifest("api")).toMatchObject({
+      buildContext: "../../../api",
+      dockerfile: "Dockerfile",
+    });
+    expect(manifest("api")).not.toHaveProperty("image");
+  });
+
+  it("does not write an interpolated image, and drops dependencies on it", () => {
+    const { writes, manifest, text } = plan(
+      [
+        "services:",
+        "  api:",
+        "    image: example/api:1",
+        "    ports: ['4000:4000']",
+        "    depends_on: [db]",
+        "  db:",
+        "    image: postgres:${PG_VERSION:-16}",
+        "    ports: ['5432:5432']",
+      ].join("\n"),
+    );
+    expect(writes.items.map((i) => i.service.name)).toEqual(["api"]);
+    expect(writes.rejected[0]).toMatchObject({ name: "db" });
+    expect(text).toContain(
+      'not written: db: image "postgres:${PG_VERSION:-16}" uses Compose variables',
+    );
+    expect(manifest("api")).not.toHaveProperty("dependsOn");
+    expect(text).toContain("dependsOn not written, not in this import: db");
+  });
+
+  it("does not use a health path TDK rejects", () => {
+    const { manifest, text } = plan(
+      [
+        "services:",
+        "  api:",
+        "    image: example/api:1",
+        "    ports: ['4000:4000']",
+        "    healthcheck:",
+        "      test: ['CMD', 'curl', '-f', 'http://localhost:4000/health_check']",
+      ].join("\n"),
+    );
+    expect(manifest("api").healthCheckPath).toBe("/");
+    expect(text).toContain('health path "/health_check" has characters TDK does not accept');
+  });
+
+  it("names every Compose key that is not translated", () => {
+    const { text } = plan(
+      [
+        "services:",
+        "  api:",
+        "    image: example/api:1",
+        "    command: npm run start:prod",
+        "    env_file: .env.api",
+        "    volumes: ['./data:/data']",
+      ].join("\n"),
+    );
+    expect(text).toContain('service "api" keys not translated: command, env_file, volumes');
+    expect(text).not.toContain("command:   ");
+  });
+
+  it("does not import a service whose build context is outside the directory", () => {
+    const { p, text } = plan(
+      "services:\n  api:\n    build: ../shared\n    command: node app.js\n  web:\n    image: nginx:1.27\n",
+    );
+    expect(p.services.map((s) => s.name)).toEqual(["web"]);
+    expect(text).toContain(
+      'build context "../shared" is outside the imported directory; not imported',
+    );
+    expect(existsSync(join(root, "services", "shop", "api"))).toBe(false);
   });
 });

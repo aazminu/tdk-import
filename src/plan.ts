@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import "./detectors/index.js";
+import { ImportError } from "./errors.js";
 import { type MergedService, mergeCandidates } from "./merge.js";
 import { selectDetectors } from "./registry.js";
 import type { Candidate, Skip } from "./types.js";
@@ -17,21 +18,54 @@ export interface ImportPlan {
   files: string[];
 }
 
+const COMPOSE_FILE = "docker-compose.yml";
+/** Names `docker compose` also picks up, in its own order of preference; none of them is read. */
+const OTHER_COMPOSE_FILES = ["compose.yaml", "compose.yml", "docker-compose.yaml"];
+/** Files `docker compose up` merges over the main file; none of them is applied. */
+const OVERRIDE_FILES = [
+  "compose.override.yaml",
+  "compose.override.yml",
+  "docker-compose.override.yaml",
+  "docker-compose.override.yml",
+];
+
 /** Read the one supported input, root docker-compose.yml. This function writes nothing. */
 export function buildPlan(dir: string): ImportPlan {
   const root = resolve(dir);
   if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`${dir} is not a directory`);
   }
-  const composePath = "docker-compose.yml";
+  const composePath = COMPOSE_FILE;
   const detectors = selectDetectors(["compose"]);
   const candidates: Candidate[] = [];
   const skips: Skip[] = [];
+  const isFile = (name: string) =>
+    statSync(resolve(root, name), { throwIfNoEntry: false })?.isFile() ?? false;
 
-  if (!statSync(resolve(root, composePath), { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(
-      `No root docker-compose.yml found in ${root}; tdk import currently reads that file only`,
+  if (!isFile(composePath)) {
+    const others = OTHER_COMPOSE_FILES.filter(isFile);
+    throw new ImportError(
+      `No root docker-compose.yml found in ${root}${others.length ? ` (found ${others.join(", ")})` : ""}; tdk import reads only that file`,
+      others.length
+        ? [
+            `Other Compose file names are not read yet. To import ${others[0]}, link it: ln -s ${others[0]} docker-compose.yml`,
+          ]
+        : ["Run tdk import in the directory that holds docker-compose.yml"],
     );
+  }
+  for (const name of OTHER_COMPOSE_FILES.filter(isFile)) {
+    skips.push({
+      file: name,
+      detector: "compose",
+      reason: `not read; \`docker compose\` prefers it over ${COMPOSE_FILE}, so what it runs may differ from this plan`,
+    });
+  }
+  for (const name of OVERRIDE_FILES.filter(isFile)) {
+    skips.push({
+      file: name,
+      detector: "compose",
+      reason: `not applied; \`docker compose up\` merges it over ${COMPOSE_FILE}, tdk import does not`,
+    });
   }
   for (const detector of detectors) {
     if (!detector.claim(composePath)) continue;
