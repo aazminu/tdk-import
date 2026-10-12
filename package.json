@@ -1,6 +1,6 @@
 {
   "name": "@tdk-landscape/tdk-import",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Import services from a repository's root docker-compose.yml into TDK service.json files.",
   "type": "module",
   "license": "MIT",
