@@ -240,3 +240,29 @@ describe("Compose values TDK cannot take as they are", () => {
     expect(existsSync(join(root, "services", "shop", "api"))).toBe(false);
   });
 });
+
+describe("health path for non-HTTP services", () => {
+  const compose = [
+    "services:",
+    "  api:",
+    "    build:",
+    "      context: ./api",
+    "    ports: ['4000:4000']",
+    "    healthcheck:",
+    "      test: ['CMD-SHELL', 'curl -f http://localhost:4000/health || exit 1']",
+    "  db:",
+    "    image: postgres:16",
+    "    ports: ['5432:5432']",
+    "",
+  ].join("\n");
+
+  it("omits healthCheckPath for a public infrastructure image and keeps it for a web service", () => {
+    tree({ "docker-compose.yml": compose, "api/Dockerfile": "FROM node:22\nEXPOSE 4000\n" });
+    const plan = buildPlan(root);
+    applyWrites(planWrites(plan, false));
+    const api = JSON.parse(readFileSync(serviceJson("api"), "utf8"));
+    const db = JSON.parse(readFileSync(serviceJson("db"), "utf8"));
+    expect(api.healthCheckPath).toBe("/health");
+    expect(db).not.toHaveProperty("healthCheckPath");
+  });
+});
