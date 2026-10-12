@@ -1,12 +1,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import "./detectors/index.js";
+import { ImportError } from "./errors.js";
 import { type MergedService, mergeCandidates } from "./merge.js";
 import { selectDetectors } from "./registry.js";
-import { isNodeCommand } from "./scaffold.js";
-import { scanTree } from "./scan.js";
 import type { Candidate, Skip } from "./types.js";
-import { findUnsupported } from "./unsupported.js";
 
 export interface ImportPlan {
   root: string;
@@ -20,62 +18,80 @@ export interface ImportPlan {
   files: string[];
 }
 
-/** Scan, detect, merge. Reads files, writes nothing. An unknown `--only` id throws before the walk. */
-export function buildPlan(dir: string, only?: string[]): ImportPlan {
+const COMPOSE_FILE = "docker-compose.yml";
+/** Names `docker compose` also picks up, in its own order of preference; none of them is read. */
+const OTHER_COMPOSE_FILES = ["compose.yaml", "compose.yml", "docker-compose.yaml"];
+/** Files `docker compose up` merges over the main file; none of them is applied. */
+const OVERRIDE_FILES = [
+  "compose.override.yaml",
+  "compose.override.yml",
+  "docker-compose.override.yaml",
+  "docker-compose.override.yml",
+];
+
+/** Read the one supported input, root docker-compose.yml. This function writes nothing. */
+export function buildPlan(dir: string): ImportPlan {
   const root = resolve(dir);
   if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`${dir} is not a directory`);
   }
-  const detectors = selectDetectors(only);
-  const scan = scanTree(root);
+  const composePath = COMPOSE_FILE;
+  const detectors = selectDetectors(["compose"]);
   const candidates: Candidate[] = [];
   const skips: Skip[] = [];
+  const isFile = (name: string) =>
+    statSync(resolve(root, name), { throwIfNoEntry: false })?.isFile() ?? false;
 
-  for (const file of scan.files) {
-    for (const detector of detectors) {
-      if (!detector.claim(file)) continue;
-      try {
-        const result = detector.parse(resolve(root, file), file);
-        candidates.push(...result.candidates);
-        skips.push(...result.skips);
-      } catch (err) {
-        skips.push({
-          file,
-          detector: detector.id,
-          reason: `could not be read: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
-    }
-  }
-
-  const unsupported = findUnsupported(scan.files);
-  const merged = mergeCandidates(candidates, basename(root));
-  const services = [];
-  let skippedProcfileProcesses = 0;
-  for (const service of merged.services) {
-    const unsupportedCommands = service.procfileCommands.filter(
-      (command) => !isNodeCommand(command),
+  if (!isFile(composePath)) {
+    const others = OTHER_COMPOSE_FILES.filter(isFile);
+    throw new ImportError(
+      `No root docker-compose.yml found in ${root}${others.length ? ` (found ${others.join(", ")})` : ""}; tdk import reads only that file`,
+      others.length
+        ? [
+            `Other Compose file names are not read yet. To import ${others[0]}, link it: ln -s ${others[0]} docker-compose.yml`,
+          ]
+        : ["Run tdk import in the directory that holds docker-compose.yml"],
     );
-    if (unsupportedCommands.length > 0 && !service.image && !service.dockerfile) {
-      skippedProcfileProcesses += 1;
-      const source = service.sources.find((candidate) => candidate.detector === "procfile");
-      skips.push({
-        file: source?.file ?? "Procfile",
-        detector: "procfile",
-        reason: `process "${service.name}" skipped: command "${unsupportedCommands[0]}" is not a supported Node command and no Dockerfile or image is associated; add a Dockerfile or image`,
-      });
-      continue;
-    }
-    services.push(service);
   }
+  for (const name of OTHER_COMPOSE_FILES.filter(isFile)) {
+    skips.push({
+      file: name,
+      detector: "compose",
+      reason: `not read; \`docker compose\` prefers it over ${COMPOSE_FILE}, so what it runs may differ from this plan`,
+    });
+  }
+  for (const name of OVERRIDE_FILES.filter(isFile)) {
+    skips.push({
+      file: name,
+      detector: "compose",
+      reason: `not applied; \`docker compose up\` merges it over ${COMPOSE_FILE}, tdk import does not`,
+    });
+  }
+  for (const detector of detectors) {
+    if (!detector.claim(composePath)) continue;
+    try {
+      const result = detector.parse(resolve(root, composePath), composePath);
+      candidates.push(...result.candidates);
+      skips.push(...result.skips);
+    } catch (err) {
+      skips.push({
+        file: composePath,
+        detector: detector.id,
+        reason: `could not be read: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  const merged = mergeCandidates(candidates, basename(root));
+  const services = merged.services;
   return {
     root,
     services,
-    skips: [...skips, ...merged.skips, ...unsupported.skips],
-    unsupported: unsupported.labels,
-    skippedProcfileProcesses,
-    notes: scan.notes,
-    files: scan.files,
+    skips: [...skips, ...merged.skips],
+    unsupported: [],
+    skippedProcfileProcesses: 0,
+    notes: [],
+    files: [composePath],
   };
 }
 

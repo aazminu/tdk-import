@@ -1,47 +1,41 @@
-# Import a repo
+# Import a Compose project
 
-`tdk-import [dir]` scans a directory, finds the services it describes, and writes one bring-your-own `service.json` per service. It plans first and asks before writing.
+`tdk import [dir]` reads exactly one file: `<dir>/docker-compose.yml`. It prints a plan, asks before writing, and writes one `service.json` per Compose service. `--dry-run` never writes; `--yes` writes without prompting. It does not start containers.
 
 ```bash
-tdk-import .                    # scan, show the plan, ask before writing
-tdk-import . --dry-run          # plan only
-tdk-import . --yes              # write without prompting
-tdk-import . --only compose,procfile
-tdk-import . --yes --force      # overwrite existing service.json files
+tdk import . --dry-run
+tdk import .
+tdk import . --yes
 ```
 
-Use `npx -y @tdk-landscape/tdk-import@0.1.1 <dir>`. Version 0.1.1 includes the unsupported-infrastructure refusal and Procfile skip safeguards from [tdk-import#9](https://github.com/tdk-landscape/tdk-import/pull/9); 0.1.0 predates those guarantees.
+Each Compose service becomes `services/<stack>/<service>/service.json`, where the stack is the directory name. When the repo is not already a TDK project, the write also creates `.tdk/project.json` with the imported stack and the Traefik proxy enabled. Existing `service.json` and `.tdk/project.json` files are kept; `--force` overwrites `service.json` files only. The Compose file and the source tree are never changed.
 
-Manifests go to `<project>/services/<stack>/<name>/service.json`. The project is the nearest TDK project at or above `dir`, else `dir` itself. The stack is the kebab-cased name of `dir`. An existing `service.json` is never overwritten without `--force`.
+## What maps
 
-## What it reads
+| Compose | `service.json` |
+| --- | --- |
+| `build` (context inside `dir`) | `buildContext` pointing at the original directory, `dockerfile` (default `Dockerfile`). With `build` and `image`, TDK builds; it does not pull the tag. |
+| `image` (no `build`) | `image` |
+| one published container port, 1024 or above | `port`, unchanged, because the image already listens there. A port outside 4000-5999 is noted, since TDK may warn about the range. |
+| a container port below 1024 (nginx on 80) | a free port from 4000-5999. The container must listen on `$PORT`, or it will not answer. |
+| HTTP URL in `healthcheck.test` | `healthCheckPath`. Without one, `/` is assumed and the plan says so. |
+| `depends_on` | `dependsOn`, limited to services in this import |
+| `environment` | names in the plan only; values are never written |
 
-| Detector | Claims | Reads |
-| --- | --- | --- |
-| `compose` | `docker-compose*.yml`, `compose*.yml` | services, `image`, `build`, `command`, `ports`, environment names, `depends_on` |
-| `dockerfile` | `Dockerfile` | `EXPOSE`, `CMD` (last stage) |
-| `package-json` | `package.json` | `start`, else `dev` script; a runtime only when the script starts with `bun` or `node` |
-| `procfile` | `Procfile`, `Procfile.*` | one service per `name: command` line; `release` is a job |
+Every imported service is `appType: "bring-your-own"`. A service whose port is 3306, 5432, 6379, 27017, 5672, 9092, 9200 or 11211, or that publishes no single port, is private: `exposeViaProxy: false`, no Traefik route, no health path. Any other single port, including 8000 and 8080, gets a Traefik route.
 
-Procfile commands beginning with `node`, `npm`, `pnpm`, `yarn`, or `bun` are eligible for a generated Dockerfile. Other commands are skipped unless that process has a matching Dockerfile or image. Supported siblings are still imported; the command exits 2 only when every valid Procfile process is skipped.
+## What does not map
 
-Imported services require TDK CLI core **1.3.104 or later**, the first release containing `buildContext` ([tdk-cli-core#525](https://github.com/tdk-landscape/tdk-cli-core/pull/525), [release 1.3.104](https://github.com/tdk-landscape/tdk-cli-releases/releases/tag/v1.3.104)). If core 1.3.104 is unavailable, import cannot be started yet; do not run `tdk up` against an older core. The importer does not detect the installed core version.
+The plan names each of these. Nothing below is guessed.
 
-One service is often described by several files. Candidates are grouped by directory and name: Compose `build: ./api` joins `api/Dockerfile` and `api/package.json`. A Dockerfile or `package.json` joins the single named service in its directory. When a directory has several named services, it is not guessed onto one; the file is listed as skipped.
+- **Other Compose files.** `compose.yaml`, `compose.yml` and `docker-compose.yaml` are not read. Override files (`docker-compose.override.yml` and the rest) are not applied, though `docker compose up` would merge them. Nested Compose files are not read.
+- **Service keys other than** `build`, `image`, `ports`, `environment`, `depends_on` and `healthcheck`. The plan lists the rest per service, for example `volumes`, `command`, `entrypoint`, `env_file`, `networks`, `restart`. In particular, data in Compose volumes is not kept, and a Compose `command` is not run: the image's own `CMD` runs.
+- **Services not written at all:** `profiles`, `extends`, a `build` context outside `dir`, and an `image` with Compose variables such as `postgres:${PG_VERSION:-16}`. A dependency on a service that is not written is dropped and noted.
+- **Values TDK would refuse.** A health path with characters other than `a-z`, `0-9`, `/` and `-` is not used.
+- **Interpolation and merging.** `docker compose config` is not run; `${VAR}` is not resolved. YAML anchors are resolved and noted.
 
-If two files give different values for a field, the plan prints a `CONFLICT` line with both sources and the field is left out. Nothing is guessed.
+## Before `tdk up`
 
-## What it does not do
-
-- It does not run `helm`, `kustomize` or `docker compose config`. It only parses files.
-- Environment values are never written (they may be secrets). Names are listed; put values in the project `.env`.
-- A Compose service with `extends` or `profiles` is skipped and named. YAML anchors are resolved and named.
-- TDK assigns the port. A source port is reused only when it is inside 4000-5999 and free; otherwise the app must read `PORT`.
-- A runtime found in `package.json` is shown, not mapped to a native provider.
-- A supported Procfile command is used to scaffold a Dockerfile. Non-Node commands are skipped unless a Dockerfile or image is already associated with that process; add one to import a skipped process.
-- A Dockerfile stays in the source tree. TDK builds bring-your-own with the manifest directory as context, so `COPY` paths may need adjusting.
-- Scanning skips `.git`, `node_modules`, `vendor`, `target`, `dist`, `.autogenerated`, `.gitignore`d paths (no `!` negation) and symlinks, and stops at depth 8 or 5000 files. The plan says when a cap hit.
-
-## Adding a detector
-
-A detector is one module in `src/detectors/` that calls `registerDetector({ id, claim, parse })`, plus a line in `detectors/index.ts` (the order is merge precedence) and a test. `claim` decides from the path alone; `parse` returns candidates and skips. It never writes a manifest, and the scanner, merge and writer do not change.
+1. Put the environment values the services need in the project `.env`. Values in `docker-compose.yml` were not copied.
+2. Use TDK core **1.3.145 or later**. 1.3.104 added `buildContext` ([tdk-cli-core#525](https://github.com/tdk-landscape/tdk-cli-core/pull/525)); 1.3.145 starts a project that has `.tdk/project.json` but no Tiltfile yet ([tdk-cli-core#1018](https://github.com/tdk-landscape/tdk-cli-core/pull/1018)). The importer does not check the installed version.
+3. TDK injects its own `PORT`, `DATABASE_URL` and a `Host: <service>.<project>.localhost` header. An app that validates its host or reads `DATABASE_URL` may need configuration that Compose did not.

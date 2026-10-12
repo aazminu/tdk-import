@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 import "./detectors/index.js";
 import { ImportError } from "./errors.js";
 import { formatPlan } from "./format.js";
 import { buildPlan } from "./plan.js";
-import { detectorIds } from "./registry.js";
+import { MIN_CORE_VERSION } from "./tdk.js";
 import { applyWrites, manifestRelPath, planWrites } from "./write.js";
 
 async function confirm(message: string): Promise<boolean> {
@@ -22,46 +22,14 @@ async function confirm(message: string): Promise<boolean> {
 
 const program = new Command("tdk-import")
   .version(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version)
-  .description("Scan a directory and import the services it describes into TDK")
-  .argument("[dir]", "Directory to scan", ".")
+  .description("Import services from the root docker-compose.yml into TDK")
+  .argument("[dir]", "Directory containing docker-compose.yml", ".")
   .option("--dry-run", "Print the plan and write nothing", false)
   .option("--yes", "Write without prompting", false)
   .option("--force", "Overwrite an existing service.json", false)
-  .option("--only <ids>", `Comma-separated detectors to run (${detectorIds().join(", ")})`)
   .action(async (dir: string, options) => {
-    const only = options.only
-      ? String(options.only)
-          .split(",")
-          .map((id) => id.trim())
-          .filter(Boolean)
-      : undefined;
-    const plan = buildPlan(dir, only);
+    const plan = buildPlan(dir);
     const writes = planWrites(plan, options.force);
-
-    if (
-      plan.services.length === 0 &&
-      (plan.unsupported.length > 0 || plan.skippedProcfileProcesses > 0)
-    ) {
-      for (const skip of plan.skips.filter((item) =>
-        ["procfile", "unsupported"].includes(item.detector),
-      )) {
-        console.log(`${skip.file} [${skip.detector}]: ${skip.reason}`);
-      }
-      const reasons = [
-        ...(plan.unsupported.length > 0 ? [`${plan.unsupported.join(", ")} is not imported`] : []),
-        ...(plan.skippedProcfileProcesses > 0
-          ? [`all ${plan.skippedProcfileProcesses} Procfile process(es) were skipped`]
-          : []),
-      ];
-      throw new ImportError(
-        `${reasons.join("; ")}; nothing was written`,
-        [
-          "Add a Dockerfile or image for skipped Procfile processes",
-          "tdk import reads Compose, Dockerfile, package.json scripts, and Procfile",
-        ],
-        2,
-      );
-    }
 
     console.log(formatPlan(plan, writes));
 
@@ -70,15 +38,32 @@ const program = new Command("tdk-import")
       return void console.log("Nothing to import.");
     }
     if (options.dryRun) return void console.log("Dry run: nothing written.");
-    if (pending.length === 0) {
+    if (pending.length === 0 && !writes.projectConfig) {
       return void console.log("Nothing to write: every service.json already exists.");
     }
-    if (!options.yes && !(await confirm(`Write ${pending.length} service.json file(s)?`))) return;
+    if (
+      !options.yes &&
+      !(await confirm(
+        `Write ${pending.length} service.json file(s)${writes.projectConfig ? " and create .tdk/project.json" : ""}?`,
+      ))
+    )
+      return;
     const written = applyWrites(writes);
     for (const item of written) {
       console.log(`  wrote ${relative(process.cwd(), item.path) || manifestRelPath(plan, item)}`);
     }
-    console.log(`\nWrote ${written.length} service.json file(s).`);
+    console.log(
+      `\nWrote ${written.length} service.json file(s)${writes.projectConfig ? " and created .tdk/project.json" : ""}.`,
+    );
+    const envFile = relative(process.cwd(), join(writes.projectRoot, ".env")) || ".env";
+    console.log("\nNext:");
+    if (plan.services.some((s) => s.envKeys.length))
+      console.log(
+        `  - Put the environment values these services need in ${envFile}; values in docker-compose.yml were not copied.`,
+      );
+    console.log(
+      `  - Run \`tdk up\` with TDK core ${MIN_CORE_VERSION} or later. The import did not start anything.`,
+    );
   });
 
 try {

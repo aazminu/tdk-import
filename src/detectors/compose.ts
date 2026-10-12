@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, normalize } from "node:path/posix";
+import { dirname, isAbsolute, join, normalize } from "node:path/posix";
 import { isAlias, isMap, type Node, parseDocument, visit } from "yaml";
 import { registerDetector } from "../registry.js";
+import { HEALTH_CHECK_PATH_PATTERN } from "../tdk.js";
 import type { Candidate, Skip } from "../types.js";
 
 type Obj = Record<string, unknown>;
@@ -16,6 +17,22 @@ function containerPort(entry: unknown): number | undefined {
   const first = last.split("-")[0] ?? "";
   return /^\d+$/.test(first) ? Number.parseInt(first, 10) : undefined;
 }
+
+const NON_HTTP_PORTS = new Set([3306, 5432, 6379, 27017, 5672, 9092, 9200, 11211]);
+
+/**
+ * Service keys this detector translates. Every other key is named in the report: TDK runs a
+ * bring-your-own container without volumes, command overrides, env files and the rest.
+ * `healthcheck` only contributes an HTTP path; `environment` only contributes names.
+ */
+const TRANSLATED_KEYS = new Set([
+  "image",
+  "build",
+  "ports",
+  "environment",
+  "depends_on",
+  "healthcheck",
+]);
 
 function envNames(environment: unknown): string[] {
   if (Array.isArray(environment)) {
@@ -33,9 +50,23 @@ function commandOf(command: unknown): string | undefined {
   return undefined;
 }
 
+function healthPathOf(healthcheck: unknown): string | undefined {
+  if (!isObj(healthcheck) || !Array.isArray(healthcheck.test)) return undefined;
+  const test = healthcheck.test
+    .filter((part): part is string => typeof part === "string")
+    .join(" ");
+  const match = test.match(/https?:\/\/[^\s"']+(\/[^\s"']*)?/i);
+  if (!match) return undefined;
+  try {
+    return new URL(match[0]).pathname || "/";
+  } catch {
+    return undefined;
+  }
+}
+
 registerDetector({
   id: "compose",
-  claim: (relPath) => /^(docker-)?compose(\..+)?\.ya?ml$/.test(basename(relPath)),
+  claim: (relPath) => relPath === "docker-compose.yml",
   parse(absPath, relPath) {
     const composeDir = dirname(relPath) === "." ? "" : dirname(relPath);
     const base = { file: relPath, detector: "compose" };
@@ -76,11 +107,17 @@ registerDetector({
         continue;
       }
       if (raw.extends !== undefined) {
-        skips.push({ ...base, reason: `service "${name}" uses \`extends\`; not imported` });
+        skips.push({
+          ...base,
+          reason: `service "${name}" uses \`extends\`; values are not resolved`,
+        });
         continue;
       }
       if (raw.profiles !== undefined) {
-        skips.push({ ...base, reason: `service "${name}" uses \`profiles\`; not imported` });
+        skips.push({
+          ...base,
+          reason: `service "${name}" has profiles ${JSON.stringify(raw.profiles)}; profiles are not enforced by TDK`,
+        });
         continue;
       }
 
@@ -94,26 +131,34 @@ registerDetector({
         if (isAbsolute(context) || context.includes("://") || resolved.startsWith("..")) {
           skips.push({
             ...base,
-            reason: `service "${name}" build context "${context}" is outside the imported tree`,
+            reason: `service "${name}" build context "${context}" is outside the imported directory; not imported`,
           });
-        } else {
-          dir = resolved === "." ? "" : resolved;
-          standalone = false;
-          if (typeof build.dockerfile === "string") dockerfile = build.dockerfile;
+          continue;
         }
+        dir = resolved === "." ? "" : resolved;
+        standalone = false;
+        dockerfile = typeof build.dockerfile === "string" ? build.dockerfile : "Dockerfile";
       }
 
       const ports = [
         ...new Set(
           (Array.isArray(raw.ports) ? raw.ports : [])
             .map(containerPort)
-            .filter((p) => p !== undefined),
+            .filter((p): p is number => p !== undefined),
         ),
-      ] as number[];
-      if (ports.length > 1) {
+      ];
+      const httpPorts = ports.filter((port) => port <= 5999 && !NON_HTTP_PORTS.has(port));
+      const selectedPort =
+        httpPorts.length === 1 ? httpPorts[0] : ports.length === 1 ? ports[0] : undefined;
+      if (ports.length > 1 && selectedPort === undefined) {
         skips.push({
           ...base,
-          reason: `service "${name}" lists several ports (${ports.join(", ")}); port not imported`,
+          reason: `service "${name}" lists several ports (${ports.join(", ")}); no single HTTP container port could be identified`,
+        });
+      } else if (ports.length > 1) {
+        skips.push({
+          ...base,
+          reason: `service "${name}" publishes extra container ports (${ports.filter((port) => port !== selectedPort).join(", ")}); TDK routes only ${selectedPort}`,
         });
       }
       const dependsOn = Array.isArray(raw.depends_on)
@@ -123,6 +168,27 @@ registerDetector({
           : [];
       const command = commandOf(raw.command);
       const envKeys = envNames(raw.environment);
+      const foundHealthPath = healthPathOf(raw.healthcheck);
+      const healthCheckPath =
+        foundHealthPath && HEALTH_CHECK_PATH_PATTERN.test(foundHealthPath)
+          ? foundHealthPath
+          : undefined;
+      if (foundHealthPath && !healthCheckPath) {
+        skips.push({
+          ...base,
+          reason: `service "${name}" health path "${foundHealthPath}" has characters TDK does not accept (only a-z, 0-9, / and -); not used`,
+        });
+      }
+      const untranslated = Object.keys(raw).filter((key) => !TRANSLATED_KEYS.has(key));
+      if (untranslated.length) {
+        skips.push({
+          ...base,
+          reason: `service "${name}" keys not translated: ${untranslated.join(", ")}`,
+        });
+      }
+      // Any single published port that is not a known database/broker port is treated as HTTP,
+      // including 8000 and 8080; a service with no published port stays private, as in Compose.
+      const exposeViaProxy = selectedPort !== undefined && !NON_HTTP_PORTS.has(selectedPort);
 
       candidates.push({
         kind: "service",
@@ -132,7 +198,9 @@ registerDetector({
         ...(typeof raw.image === "string" ? { image: raw.image } : {}),
         ...(dockerfile ? { dockerfile } : {}),
         ...(command ? { command } : {}),
-        ...(ports.length === 1 ? { port: ports[0] } : {}),
+        ...(selectedPort !== undefined ? { port: selectedPort } : {}),
+        ...(healthCheckPath ? { healthCheckPath } : {}),
+        exposeViaProxy,
         ...(envKeys.length ? { envKeys } : {}),
         ...(dependsOn.length ? { dependsOn } : {}),
         confidence: "high",
