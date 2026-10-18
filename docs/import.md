@@ -18,7 +18,7 @@ Each Compose service becomes `services/<stack>/<service>/service.json`, where th
 | `image` (no `build`) | `image` |
 | one published container port, 1024 or above | `port`, unchanged, because the image already listens there. A port outside 4000-5999 is noted, since TDK may warn about the range. |
 | a container port below 1024 (nginx on 80) | a free port from 4000-5999. The container must listen on `$PORT`, or it will not answer. |
-| HTTP URL in `healthcheck.test` | `healthCheckPath`. Without one, `/` is assumed and the plan says so. |
+| HTTP URL, `host:port/path` or `localhost/path` in `healthcheck.test` | `healthCheckPath`. When no path can be read, `/` is assumed and the plan says so. |
 | `depends_on` | `dependsOn`, limited to services in this import |
 | `environment` | names in the plan only; values are never written |
 
