@@ -7,7 +7,6 @@ import {
   BYO_PORT_RANGE,
   findProjectRoot,
   IMAGE_PATTERN,
-  MIN_SERVICE_PORT,
   SERVICE_MANIFEST_SCHEMA_URL,
   SERVICE_MANIFEST_SCHEMA_VERSION,
   validateName,
@@ -119,6 +118,10 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
     const exists = existsSync(path);
     const status: WriteStatus = !exists ? "create" : force ? "overwrite" : "exists";
     const notes: string[] = [];
+    if (service.originalName && service.originalName !== service.name)
+      notes.push(
+        `renamed from "${service.originalName}" (Compose names must be lowercase kebab-case)`,
+      );
 
     // A file this run replaces does not count against itself; a kept one keeps its port.
     if (status === "overwrite") used.delete(path);

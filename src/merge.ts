@@ -9,6 +9,7 @@ export interface Conflict {
 
 export interface MergedService {
   name: string;
+  originalName?: string;
   dir: string;
   kind: CandidateKind;
   image?: string;
@@ -89,8 +90,10 @@ function mergeGroup(
   resolve: (raw: string) => string,
 ): MergedService {
   const ordered = [...members].sort((a, b) => rank(a) - rank(b));
+  const originalName = ordered.find((c) => c.name !== undefined && c.name !== name)?.name;
   const merged: MergedService = {
     name,
+    ...(originalName ? { originalName } : {}),
     dir,
     kind: (ordered[0] as Candidate).kind,
     envKeys: [...new Set(ordered.flatMap((c) => c.envKeys ?? []))].sort(),
