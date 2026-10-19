@@ -13,8 +13,11 @@ import { applyWrites, manifestRelPath, planWrites } from "./write.js";
 async function confirm(message: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = (await rl.question(`${message} (Y/n) `)).trim().toLowerCase();
-    return answer === "" || answer === "y" || answer === "yes";
+    const closed = new Promise<null>((resolve) => rl.once("close", () => resolve(null)));
+    const answer = await Promise.race([rl.question(`${message} (Y/n) `), closed]);
+    if (answer === null) return false;
+    const trimmed = answer.trim().toLowerCase();
+    return trimmed === "" || trimmed === "y" || trimmed === "yes";
   } finally {
     rl.close();
   }
@@ -48,8 +51,11 @@ const program = new Command("tdk-import")
       !(await confirm(
         `Write ${pending.length} service.json file(s)${writes.projectConfig ? " and create .tdk/project.json" : ""}?`,
       ))
-    )
+    ) {
+      console.log("Nothing written.");
+      process.exitCode = 2;
       return;
+    }
     const written = applyWrites(writes);
     for (const item of written) {
       console.log(`  wrote ${relative(process.cwd(), item.path) || manifestRelPath(plan, item)}`);

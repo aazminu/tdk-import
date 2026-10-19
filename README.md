@@ -15,6 +15,7 @@ tdk import . --yes         # write service.json files and project setup
 - **Keeps:** the build context and Dockerfile (or the image), the container port, `depends_on`, and an HTTP health path. Databases and brokers are private, with no proxy route.
 - **Drops, and says so:** env values, volumes, `command`, `env_file` and every other untranslated key; services with `profiles`, `extends`, an out-of-tree build or a `${VAR}` image.
 - **Does not start anything.** Put env values in `.env`, then run `tdk up` with TDK core **1.3.145 or later**. The importer does not check the core version.
+- **Exit codes:** `0` when the plan succeeds (`--dry-run`, files written, or all `service.json` files already exist), `1` when no root `docker-compose.yml` or mappable service is found, and `2` when the write prompt is declined or closed without an answer (`Nothing written.`).
 
 See [docs/import.md](docs/import.md) for the full mapping and limits. `tdk import` is the core CLI command backed by this package.
 
