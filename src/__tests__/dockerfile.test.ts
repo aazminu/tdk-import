@@ -63,14 +63,13 @@ describe("dockerfile detector", () => {
     expect(text).toContain("Dockerfile:2 [dockerfile]: EXPOSE uses a variable; port not imported");
   });
 
-  it("imports a numeric EXPOSE port and keeps only the final stage in multi-stage builds", () => {
+  it("imports EXPOSE and CMD when only the final stage defines them", () => {
     const absPath = join(root, "Dockerfile");
     writeFileSync(
       absPath,
       [
         "FROM node:22 AS builder",
-        `EXPOSE $${"{BUILD_PORT}"}`,
-        'CMD ["npm", "run", "build"]',
+        "RUN npm ci && npm run build",
         "FROM node:22-slim",
         "EXPOSE 4000/tcp",
         'CMD ["node", "dist/index.js"]',
@@ -87,5 +86,46 @@ describe("dockerfile detector", () => {
       port: 4000,
       command: "node dist/index.js",
     });
+  });
+
+  it("resets ports, command, and skips on each FROM so earlier stages do not leak into the final stage", () => {
+    const absPath = join(root, "Dockerfile");
+    const [detector] = selectDetectors(["dockerfile"]);
+    if (!detector) throw new Error("dockerfile detector not registered");
+
+    writeFileSync(
+      absPath,
+      [
+        "FROM node:22 AS builder",
+        "EXPOSE 3000",
+        `EXPOSE $${"{BUILD_PORT}"}`,
+        'CMD ["npm", "run", "build"]',
+        "FROM node:22-slim",
+        "EXPOSE 4000/tcp",
+        'CMD ["node", "dist/index.js"]',
+        "",
+      ].join("\n"),
+    );
+    const overridden = detector.parse(absPath, "Dockerfile");
+    expect(overridden.skips).toEqual([]);
+    expect(overridden.candidates[0]).toMatchObject({
+      port: 4000,
+      command: "node dist/index.js",
+    });
+
+    writeFileSync(
+      absPath,
+      [
+        "FROM node:22 AS builder",
+        "EXPOSE 3000",
+        'CMD ["npm", "run", "build"]',
+        "FROM nginx:alpine",
+        "",
+      ].join("\n"),
+    );
+    const cleared = detector.parse(absPath, "Dockerfile");
+    expect(cleared.skips).toEqual([]);
+    expect(cleared.candidates[0]?.port).toBeUndefined();
+    expect(cleared.candidates[0]?.command).toBeUndefined();
   });
 });
