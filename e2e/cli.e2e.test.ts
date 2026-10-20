@@ -98,4 +98,19 @@ describe("tdk-import (built CLI)", () => {
     expect(r.err).toContain("ln -s compose.yaml docker-compose.yml");
     expect(existsSync(join(repo, "services"))).toBe(false);
   });
+
+  it("lists Kustomize and Helm fixtures as skipped with their unsupported reasons", () => {
+    cpSync(
+      join(import.meta.dirname, "fixtures", "kustomize-only", "kustomization.yaml"),
+      join(repo, "kustomization.yaml"),
+    );
+    cpSync(
+      join(import.meta.dirname, "fixtures", "helm-only", "Chart.yaml"),
+      join(repo, "Chart.yaml"),
+    );
+    const r = run(["shop", "--dry-run"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("kustomization.yaml [unsupported]: Kustomize is not imported");
+    expect(r.out).toContain("Chart.yaml [unsupported]: Helm is not imported");
+  });
 });

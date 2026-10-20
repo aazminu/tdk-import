@@ -184,9 +184,9 @@ describe("Compose values TDK cannot take as they are", () => {
     );
   });
 
-  it("builds from the Dockerfile when Compose gives both build and image", () => {
+  it("builds from the Dockerfile when Compose gives both build and image, and notes that image is not written", () => {
     tree({ "api/Dockerfile": "FROM busybox\n" });
-    const { manifest } = plan(
+    const { manifest, text } = plan(
       "services:\n  api:\n    build: ./api\n    image: example/api:dev\n    ports: ['4000:4000']\n",
     );
     expect(manifest("api")).toMatchObject({
@@ -194,6 +194,9 @@ describe("Compose values TDK cannot take as they are", () => {
       dockerfile: "Dockerfile",
     });
     expect(manifest("api")).not.toHaveProperty("image");
+    expect(text).toContain(
+      'note:      image "example/api:dev" is not written: with build and image, TDK builds from Dockerfile and does not pull the tag',
+    );
   });
 
   it("does not write an interpolated image, and drops dependencies on it", () => {

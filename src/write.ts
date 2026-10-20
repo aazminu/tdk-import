@@ -175,8 +175,13 @@ export function planWrites(plan: ImportPlan, force: boolean): WritePlan {
       );
     if (service.envKeys.length)
       notes.push("environment values are not written; put them in the project .env");
+    if (service.dockerfile && service.image)
+      notes.push(
+        `image "${service.image}" is not written: with build and image, TDK builds from ${service.dockerfile} and does not pull the tag`,
+      );
 
-    // With both, Compose builds and tags the result as `image`; TDK pulls `image` and skips the build.
+    // With both build and image, Compose builds the Dockerfile and tags the result as `image`.
+    // Omit `image` from service.json so TDK builds from the Dockerfile instead of pulling the tag.
     const source: Record<string, string> = service.dockerfile
       ? {
           buildContext:
