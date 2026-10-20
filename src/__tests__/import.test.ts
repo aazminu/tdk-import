@@ -342,4 +342,31 @@ describe("service names that normalise to the same value", () => {
     const api = plan.services.find((s) => s.name === "api");
     expect(api?.dependsOn.sort()).toEqual(["db-svc", "db-svc-2"]);
   });
+
+  it("reports renamed services in the plan while leaving matching names unnoted", () => {
+    tree({
+      "docker-compose.yml": [
+        "services:",
+        "  My_API:",
+        "    image: example/api:1",
+        "    ports: ['3000:3000']",
+        "  web:",
+        "    image: nginx:1",
+        "    depends_on: [My_API]",
+        "",
+      ].join("\n"),
+    });
+    const plan = buildPlan(root);
+    const writes = planWrites(plan, false);
+    const text = formatPlan(plan, writes);
+    const myApi = writes.items.find((i) => i.service.name === "my-api");
+    const web = writes.items.find((i) => i.service.name === "web");
+    expect(myApi?.notes).toContain(
+      'renamed from "My_API" (Compose names must be lowercase kebab-case)',
+    );
+    expect(web?.notes.some((n) => n.startsWith("renamed from"))).toBe(false);
+    expect(text).toContain(
+      'note:      renamed from "My_API" (Compose names must be lowercase kebab-case)',
+    );
+  });
 });

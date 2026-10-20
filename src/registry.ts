@@ -11,10 +11,6 @@ export function registerDetector(detector: Detector): void {
   detectors.push(detector);
 }
 
-export function listDetectors(): readonly Detector[] {
-  return detectors;
-}
-
 export function detectorIds(): string[] {
   return detectors.map((d) => d.id);
 }

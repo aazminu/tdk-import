@@ -12,8 +12,6 @@ export const SERVICE_MANIFEST_SCHEMA_URL = "https://tdk-landscape.github.io/sche
 export const MIN_CORE_VERSION = "1.3.145";
 /** TDK's bring-your-own port range. */
 export const BYO_PORT_RANGE = { min: 4000, max: 5999, label: "4000-5999" } as const;
-/** TDK rejects a service port below this. */
-export const MIN_SERVICE_PORT = 1024;
 
 /**
  * Values TDK copies into generated Compose and Traefik config must match these, or `tdk up` refuses
