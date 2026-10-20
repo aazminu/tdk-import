@@ -44,7 +44,7 @@ registerDetector({
   claim: (relPath) => basename(relPath) === "Dockerfile",
   parse(absPath, relPath) {
     const dir = dirname(relPath) === "." ? "" : dirname(relPath);
-    const skips: Skip[] = [];
+    let skips: Skip[] = [];
     // Only the last build stage is the image that runs.
     let ports: number[] = [];
     let command: string | undefined;
@@ -54,12 +54,24 @@ registerDetector({
       switch (keyword.toUpperCase()) {
         case "FROM":
           ports = [];
+          skips = [];
           command = undefined;
           break;
         case "EXPOSE":
           for (const token of rest) {
-            const port = Number.parseInt(token.split("/")[0] ?? "", 10);
-            if (Number.isInteger(port) && port > 0 && port < 65536) ports.push(port);
+            if (!token) continue;
+            const rawPort = token.split("/")[0] ?? "";
+            const port = /^\d+$/.test(rawPort) ? Number.parseInt(rawPort, 10) : Number.NaN;
+            if (Number.isInteger(port) && port > 0 && port < 65536) {
+              ports.push(port);
+            } else {
+              skips.push({
+                file: relPath,
+                detector: "dockerfile",
+                line: ins.line,
+                reason: "EXPOSE uses a variable; port not imported",
+              });
+            }
           }
           break;
         case "CMD":

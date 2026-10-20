@@ -16,8 +16,9 @@ Each Compose service becomes `services/<stack>/<service>/service.json`, where th
 | --- | --- |
 | `build` (context inside `dir`) | `buildContext` pointing at the original directory, `dockerfile` (default `Dockerfile`). With `build` and `image`, TDK builds; it does not pull the tag. |
 | `image` (no `build`) | `image` |
-| one published container port, 1024 or above | `port`, unchanged, because the image already listens there. A port outside 4000-5999 is noted, since TDK may warn about the range. |
-| a container port below 1024 (nginx on 80) | a free port from 4000-5999. The container must listen on `$PORT`, or it will not answer. |
+| one published container port in 4000-5999 (and not already used) | `port`, unchanged, because the image already listens there. |
+| a container port outside 4000-5999 (for example 80, 3000 or 8080) or already used | a free port from 4000-5999 (noted in the plan, e.g. `Compose port 3000 is outside 4000-5999 or already used; assigned 4000`). The container must listen on `$PORT`, or it will not answer. |
+| HTTP URL in `healthcheck.test` | `healthCheckPath`. Without one, `/` is assumed and the plan says so. |
 | HTTP URL, `host:port/path` or `localhost/path` in `healthcheck.test` | `healthCheckPath`. When no path can be read, `/` is assumed and the plan says so. |
 | `depends_on` | `dependsOn`, limited to services in this import |
 | `environment` | names in the plan only; values are never written |

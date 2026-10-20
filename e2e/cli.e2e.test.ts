@@ -74,11 +74,23 @@ describe("tdk-import (built CLI)", () => {
     mkdirSync(join(repo, "services", "shop", "api"), { recursive: true });
     writeFileSync(file, '{"userOwned":true}\n');
     const no = run(["shop"], "n\n");
-    expect(no.code).toBe(0);
+    expect(no.code).toBe(2);
+    expect(no.out).toContain("Nothing written.");
     expect(readFileSync(file, "utf8")).toBe('{"userOwned":true}\n');
     const yes = run(["shop"], "y\n");
     expect(yes.code).toBe(0);
     expect(readFileSync(file, "utf8")).toBe('{"userOwned":true}\n');
+  });
+
+  it("prints Nothing written. and exits 2 when stdin is closed, and defaults to yes on an empty line", () => {
+    const closed = run(["shop"], "");
+    expect(closed.code).toBe(2);
+    expect(closed.out).toContain("Nothing written.");
+    expect(existsSync(join(repo, "services"))).toBe(false);
+
+    const emptyAnswer = run(["shop"], "\n");
+    expect(emptyAnswer.code).toBe(0);
+    expect(existsSync(join(repo, "services", "shop", "api", "service.json"))).toBe(true);
   });
 
   it("requires the root docker-compose.yml and ignores nested files", () => {
@@ -97,5 +109,20 @@ describe("tdk-import (built CLI)", () => {
     expect(r.err).toContain("(found compose.yaml); tdk import reads only that file");
     expect(r.err).toContain("ln -s compose.yaml docker-compose.yml");
     expect(existsSync(join(repo, "services"))).toBe(false);
+  });
+
+  it("lists Kustomize and Helm fixtures as skipped with their unsupported reasons", () => {
+    cpSync(
+      join(import.meta.dirname, "fixtures", "kustomize-only", "kustomization.yaml"),
+      join(repo, "kustomization.yaml"),
+    );
+    cpSync(
+      join(import.meta.dirname, "fixtures", "helm-only", "Chart.yaml"),
+      join(repo, "Chart.yaml"),
+    );
+    const r = run(["shop", "--dry-run"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("kustomization.yaml [unsupported]: Kustomize is not imported");
+    expect(r.out).toContain("Chart.yaml [unsupported]: Helm is not imported");
   });
 });

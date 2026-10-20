@@ -184,9 +184,9 @@ describe("Compose values TDK cannot take as they are", () => {
     );
   });
 
-  it("builds from the Dockerfile when Compose gives both build and image", () => {
+  it("builds from the Dockerfile when Compose gives both build and image, and notes that image is not written", () => {
     tree({ "api/Dockerfile": "FROM busybox\n" });
-    const { manifest } = plan(
+    const { manifest, text } = plan(
       "services:\n  api:\n    build: ./api\n    image: example/api:dev\n    ports: ['4000:4000']\n",
     );
     expect(manifest("api")).toMatchObject({
@@ -194,6 +194,9 @@ describe("Compose values TDK cannot take as they are", () => {
       dockerfile: "Dockerfile",
     });
     expect(manifest("api")).not.toHaveProperty("image");
+    expect(text).toContain(
+      'note:      image "example/api:dev" is not written: with build and image, TDK builds from Dockerfile and does not pull the tag',
+    );
   });
 
   it("does not write an interpolated image, and drops dependencies on it", () => {
@@ -371,5 +374,32 @@ describe("service names that normalise to the same value", () => {
     expect(names).toEqual(["api", "db-svc", "db-svc-2"]);
     const api = plan.services.find((s) => s.name === "api");
     expect(api?.dependsOn.sort()).toEqual(["db-svc", "db-svc-2"]);
+  });
+
+  it("reports renamed services in the plan while leaving matching names unnoted", () => {
+    tree({
+      "docker-compose.yml": [
+        "services:",
+        "  My_API:",
+        "    image: example/api:1",
+        "    ports: ['3000:3000']",
+        "  web:",
+        "    image: nginx:1",
+        "    depends_on: [My_API]",
+        "",
+      ].join("\n"),
+    });
+    const plan = buildPlan(root);
+    const writes = planWrites(plan, false);
+    const text = formatPlan(plan, writes);
+    const myApi = writes.items.find((i) => i.service.name === "my-api");
+    const web = writes.items.find((i) => i.service.name === "web");
+    expect(myApi?.notes).toContain(
+      'renamed from "My_API" (Compose names must be lowercase kebab-case)',
+    );
+    expect(web?.notes.some((n) => n.startsWith("renamed from"))).toBe(false);
+    expect(text).toContain(
+      'note:      renamed from "My_API" (Compose names must be lowercase kebab-case)',
+    );
   });
 });
